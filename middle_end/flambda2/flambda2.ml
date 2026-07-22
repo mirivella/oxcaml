@@ -207,8 +207,17 @@ let flambda_to_flambda0 : type m.
         then (
           let flambda, free_names, all_code, slot_offsets, final_typing_env =
             Profile.record_call ~accumulate:true "reaper" (fun () ->
-                Flambda2_reaper.Reaper.run ~machine_width ~cmx_loader ~all_code
-                  ~final_typing_env flambda)
+                if Flambda_features.support_lto ()
+                then
+                  let rebuild_data =
+                    Flambda2_reaper.Reaper.traverse ~final_typing_env
+                      ~unit:flambda ~all_code
+                  in
+                  Flambda2_reaper.Reaper.solve_and_rebuild ~machine_width
+                    ~cmx_loader rebuild_data
+                else
+                  Flambda2_reaper.Reaper.run ~machine_width ~cmx_loader
+                    ~all_code ~final_typing_env flambda)
           in
           print_flambda "reaper" (Flambda_features.dump_reaper ()) ppf flambda;
           print_fexpr "reaper"

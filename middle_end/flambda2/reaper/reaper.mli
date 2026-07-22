@@ -13,12 +13,30 @@
 (*                                                                        *)
 (**************************************************************************)
 
+type rebuild_data
+
 val run :
   machine_width:Target_system.Machine_width.t ->
   cmx_loader:Flambda_cmx.loader ->
   all_code:Exported_code.t ->
   final_typing_env:Typing_env.t option ->
   Flambda_unit.t ->
+  Flambda_unit.t
+  * Name_occurrences.t
+  * Exported_code.t
+  * Slot_offsets.t
+  * Typing_env.t option
+
+val traverse :
+  final_typing_env:Typing_env.t option ->
+  all_code:Exported_code.t ->
+  unit:Flambda_unit.t ->
+  rebuild_data
+
+val solve_and_rebuild :
+  machine_width:Target_system.Machine_width.t ->
+  cmx_loader:Flambda_cmx.loader ->
+  rebuild_data ->
   Flambda_unit.t
   * Name_occurrences.t
   * Exported_code.t
