@@ -16,6 +16,8 @@
 
 (** The Flambda representation of a single compilation unit's code. *)
 
+type metadata
+
 type t
 
 val print : Format.formatter -> t -> unit
@@ -31,6 +33,10 @@ val create :
   used_value_slots:Value_slot.Set.t Or_unknown.t ->
   t
 
+val of_metadata_and_body : metadata -> Flambda.Expr.t -> t
+
+val metadata : t -> metadata
+
 val return_continuation : t -> Continuation.t
 
 val exn_continuation : t -> Continuation.t
@@ -42,6 +48,8 @@ val toplevel_my_ghost_region : t -> Variable.t
 val toplevel_my_alloc_region : t -> Variable.t
 
 val module_symbol : t -> Symbol.t
+
+val module_symbol_of_metadata : metadata -> Symbol.t
 
 val used_value_slots : t -> Value_slot.Set.t Or_unknown.t
 
