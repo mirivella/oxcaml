@@ -95,6 +95,12 @@ let solve_and_rebuild ~machine_width ~cmx_loader (rebuild_data : rebuild_data) =
   let solved_dep = solve rebuild_data.traverse_result.deps in
   rebuild ~machine_width ~solved_dep ~cmx_loader rebuild_data
 
+let store_cmr_data ~filename (_rebuild_data : rebuild_data) =
+  (* For the time being the .cmr file only contains a placeholder payload;
+     pieces of [rebuild_data] will be stored once they can be marshalled. *)
+  let compilation_unit = Compilation_unit.get_current_exn () in
+  Cmr_format.save ~filename { compilation_unit }
+
 let run ~machine_width ~cmx_loader ~all_code ~final_typing_env
     (unit : Flambda_unit.t) =
   let rebuild_data = traverse ~final_typing_env ~unit ~all_code in

@@ -208,13 +208,15 @@ let flambda_to_flambda0 : type m.
           let flambda, free_names, all_code, slot_offsets, final_typing_env =
             Profile.record_call ~accumulate:true "reaper" (fun () ->
                 if Flambda_features.support_lto ()
-                then
+                then (
                   let rebuild_data =
                     Flambda2_reaper.Reaper.traverse ~final_typing_env
                       ~unit:flambda ~all_code
                   in
+                  Flambda2_reaper.Reaper.store_cmr_data
+                    ~filename:(prefixname ^ ".cmr") rebuild_data;
                   Flambda2_reaper.Reaper.solve_and_rebuild ~machine_width
-                    ~cmx_loader rebuild_data
+                    ~cmx_loader rebuild_data)
                 else
                   Flambda2_reaper.Reaper.run ~machine_width ~cmx_loader
                     ~all_code ~final_typing_env flambda)

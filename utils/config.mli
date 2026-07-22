@@ -165,6 +165,9 @@ val linear_magic_number: string
 val cfg_magic_number: string
 (** Magic number for Cfg internal representation files *)
 
+val cmr_magic_number: string
+(** Magic number for Flambda 2 reaper (LTO) data files *)
+
 val max_tag: int
 (** Biggest tag that can be stored in the header of a regular block. *)
 

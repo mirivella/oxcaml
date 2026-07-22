@@ -42,3 +42,5 @@ val solve_and_rebuild :
   * Exported_code.t
   * Slot_offsets.t
   * Typing_env.t option
+
+val store_cmr_data : filename:string -> rebuild_data -> unit
