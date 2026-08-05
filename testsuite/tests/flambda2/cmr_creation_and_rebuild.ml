@@ -1,8 +1,13 @@
 (* TEST
  flambda2;
+ readonly_files = "cmr_creation_and_rebuild_helper.ml";
  setup-ocamlopt.opt-build-env;
  ocamlrunparam = "b=0";
 
+ module = "cmr_creation_and_rebuild_helper.ml";
+ ocamlopt.opt;
+
+ module = "";
  flags = "-flambda2-reaper -support-lto";
  compile_only = "true";
  ocamlopt.opt;
@@ -46,4 +51,9 @@ end = struct
   let go x = read (make x)
 end
 
-let () = ignore (Sys.opaque_identity (M.go 3) : int)
+module H = Cmr_creation_and_rebuild_helper
+
+let () =
+  let adder = H.make_adder (M.go 3) in
+  let f = Sys.opaque_identity adder in
+  ignore (Sys.opaque_identity (H.add_one (f 1)) : int)

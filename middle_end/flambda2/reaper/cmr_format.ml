@@ -59,14 +59,19 @@ module All_code_with_sections = struct
 
   let create ~used_value_slots ~canonicalise all_code =
     let all_code =
-      let all_names =
+      let this_unit_names =
         Code_id.Set.fold
           (fun code_id names ->
-            Name_occurrences.add_code_id names code_id Name_mode.normal)
+            (* We can skip serialising code metadata from other units since we
+               will load it from .cmx files on resume anyway. *)
+            if
+              Compilation_unit.is_current (Code_id.get_compilation_unit code_id)
+            then Name_occurrences.add_code_id names code_id Name_mode.normal
+            else names)
           (Exported_code.ids_for_export all_code).code_ids
           Name_occurrences.empty
       in
-      Exported_code.prepare_for_export all_code ~reachable_names:all_names
+      Exported_code.prepare_for_export all_code ~reachable_names:this_unit_names
         ~used_value_slots ~canonicalise
     in
     let ids_for_export = Exported_code.ids_for_export all_code in
