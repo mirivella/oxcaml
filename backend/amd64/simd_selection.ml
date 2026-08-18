@@ -92,6 +92,7 @@ let extract_constant args name ~max =
       | Cconst_vec128 (_, _)
       | Cconst_vec256 (_, _)
       | Cconst_vec512 (_, _)
+      | Cconst_mask (_, _)
       | Cconst_symbol (_, _)
       | Cvar _
       | Clet (_, _, _)
@@ -1404,7 +1405,7 @@ let vectorize_operation (width_type : Vectorize_utils.Width_in_bits.t)
         (* These instructions seem to not have a simd counterpart yet, could
            also implement as a combination of other instructions if needed in
            the future *))
-    | Idiv | Imod | Iclz | Ictz | Ipopcnt -> None
+    | Idiv _ | Imod _ | Iclz | Ictz | Ipopcnt -> None
   in
   match List.hd cfg_ops with
   | Move -> Operation.Move |> make_default ~arg_count ~res_count
