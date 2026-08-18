@@ -20,7 +20,7 @@
  file-exists;
 
  flags = "-reaper-rebuild cmr_creation_and_rebuild.cmr cmr_creation_and_rebuild.ltosol";
- last_flags = "";
+ last_flags = "-o cmr_creation_and_rebuild.reaped.cmx";
  all_modules = "";
  ocamlopt.opt;
 
@@ -28,6 +28,7 @@
  file-exists;
 
  flags = "-flambda2-reaper";
+ last_flags = "";
  compile_only = "true";
  all_modules = "cmr_creation_and_rebuild.ml";
  ocamlopt.opt;

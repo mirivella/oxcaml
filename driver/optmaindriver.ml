@@ -181,8 +181,26 @@ let main unix argv ppf ~flambda2 ~reaped_flambda2_to_cmm ~reaper_lto_solve =
              %d: [%s])"
             (List.length cmr_files) (String.concat ", " cmr_files)
       in
-      Compiler.reaper_rebuild ~ltosol_file ~cmr_file
-        ~output_prefix:(Compenv.output_prefix cmr_file ^ ".reaped")
+      let target = Compenv.extract_output !output_name in
+      if not (Filename.check_suffix target Compiler.ext_flambda_obj) then
+        Printf.ksprintf Compenv.fatal
+          "The extension of the -reaper-rebuild output file must be %s (got %s)"
+          Compiler.ext_flambda_obj target;
+      if not (String.equal
+                (Unit_info.strict_modname_from_source target)
+                (Unit_info.strict_modname_from_source cmr_file))
+      then
+        Printf.ksprintf Compenv.fatal
+          "The -reaper-rebuild output file (%s) must have the same stem as the \
+           input .cmr file (%s)"
+          target cmr_file;
+      let output_prefix = Filename.remove_extension target in
+      if String.equal output_prefix (Filename.remove_extension cmr_file) then
+        Printf.ksprintf Compenv.fatal
+          "Cannot overwrite pre-Reaper files (%s) in -reaper-rebuild, please \
+           give a different output file name"
+          target ;
+      Compiler.reaper_rebuild ~ltosol_file ~cmr_file ~output_prefix
         ~keep_symbol_tables:false;
       Warnings.check_fatal ();
     end
