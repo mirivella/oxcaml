@@ -235,18 +235,30 @@ module Staged = struct
       Types_rewriter.prepare_rewrite_context solved_dep all_sets_of_closures
     in
     let Rebuild.
-          { body; free_names; all_code; code_ids_to_remember; slot_offsets } =
+          { body;
+            free_names;
+            all_code = rebuilt_code;
+            code_ids_to_remember;
+            slot_offsets
+          } =
       Rebuild.rebuild ~machine_width ~ordered_code_ids ~code_deps
         ~fixed_arity_continuations ~continuation_info ~final_typing_env
         ~types_rewrite_context kinds solved_dep get_code_metadata toplevel_expr
         code
     in
+    (* [To_cmm] uses [all_code] and [cmx_loader]'s cache to get code metadata.
+       On resume from rebuild data, [cmx_loader]'s cache doesn't have all
+       imported modules, so instead we add pause-time data to [all_code]. *)
+    let imported_code =
+      Exported_code.mark_as_imported
+        (Exported_code.filter all_code ~f:(fun code_id ->
+             not
+               (Compilation_unit.is_current (Code_id.get_compilation_unit code_id))))
+    in
     let all_code =
       Exported_code.add_code
         ~keep_code:(fun code_id -> Code_id.Set.mem code_id code_ids_to_remember)
-        all_code
-        (Exported_code.mark_as_imported
-           (Flambda_cmx.get_imported_code cmx_loader ()))
+        rebuilt_code imported_code
     in
     let final_typing_env =
       Option.map
