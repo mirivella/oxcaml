@@ -315,12 +315,12 @@ let traverse_block_like_static_const denv acc symbol
       Symbol.print symbol
   | Boxed_float32 _ | Boxed_float _ | Boxed_int32 _ | Boxed_int64 _
   | Boxed_nativeint _ | Boxed_vec128 _ | Boxed_vec256 _ | Boxed_vec512 _
-  | Immutable_float_block _ | Immutable_float_array _
+  | Boxed_mask _ | Immutable_float_block _ | Immutable_float_array _
   | Immutable_float32_array _ | Immutable_int_array _ | Immutable_int8_array _
   | Immutable_int16_array _ | Immutable_int32_array _ | Immutable_int64_array _
   | Immutable_nativeint_array _ | Immutable_vec128_array _
-  | Immutable_vec256_array _ | Immutable_vec512_array _ | Empty_array _
-  | Mutable_string _ | Immutable_string _ ->
+  | Immutable_vec256_array _ | Immutable_vec512_array _ | Immutable_mask_array _
+  | Empty_array _ | Immutable_string _ ->
     Acc.add_alias acc ~to_:name
       ~from:(Code_id_or_name.name (Env.all_constants denv))
 
@@ -363,7 +363,7 @@ let traverse_call_kind denv acc apply ~exn_arg ~return_args ~default_acc =
     in
     let callee = Apply.callee apply in
     let is_external =
-      not (Compilation_unit.is_current (Code_id.get_compilation_unit code_id))
+      not (Current_unit.is_current (Code_id.get_compilation_unit code_id))
     in
     let[@local] add_apply acc ~only_if_closure_any_source =
       let callee, call_widget =
@@ -861,7 +861,7 @@ type result =
   }
 
 let create_symbol_and_add_any_source acc name =
-  let cu = Compilation_unit.get_current_exn () in
+  let cu = Current_unit.get_cu_exn () in
   let sym = Symbol.create cu (Linkage_name.of_string name) in
   Acc.add_any_source acc (Code_id_or_name.symbol sym);
   sym

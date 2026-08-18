@@ -253,7 +253,7 @@ module Staged = struct
       Exported_code.mark_as_imported
         (Exported_code.filter all_code ~f:(fun code_id ->
              not
-               (Compilation_unit.is_current (Code_id.get_compilation_unit code_id))))
+               (Current_unit.is_current (Code_id.get_compilation_unit code_id))))
     in
     let all_code =
       Exported_code.add_code
