@@ -473,13 +473,14 @@ module IdTbl =
       }
 
     let rec find_same_without_locks id tbl =
-      try Ident.find_same id tbl.current
-      with Not_found as exn ->
+      match Ident.find_same_or_null id tbl.current with
+      | This data -> data
+      | Null ->
         begin match tbl.layer with
         | Open {next; _} -> find_same_without_locks id next
         | Map {f; next} -> f (find_same_without_locks id next)
         | Lock {lock=_; next} -> find_same_without_locks id next
-        | Nothing -> raise exn
+        | Nothing -> raise Not_found
         end
 
     let find_same id (tbl : (empty, _, _) t) =
@@ -680,7 +681,7 @@ type t = {
   implicit_jkinds: jkind_lr loc String.Map.t;
   flags: int;
   stage: stage;
-  toplevel_scope: int
+  persistent_scope: int
 }
 
 and module_components =
@@ -898,7 +899,7 @@ type error =
   | Illegal_value_name of Location.t * string
   | Lookup_error of Location.t * t * lookup_error
   | Incomplete_instantiation of { unset_param : Global_module.Parameter_name.t }
-  | Toplevel_splice of Location.t
+  | Initial_stage_splice of Location.t
   | Unsupported_inside_quotation of Location.t * no_open_quotations_context
 
 exception Error of error
@@ -985,7 +986,7 @@ let empty = {
   functor_args = Ident.empty;
   jkinds = IdTbl.empty;
   stage = 0;
-  toplevel_scope = Ident.lowest_scope
+  persistent_scope = Ident.lowest_scope
  }
 
 let path_at_current_stage env path = { StagedPath.stage = env.stage; path }
@@ -1119,48 +1120,6 @@ let rec address_head = function
   | Aunit cu -> AHunit cu
   | Alocal id -> AHlocal id
   | Adot (a, _, _) -> address_head a
-
-(* The name of the compilation unit currently compiled. *)
-module Current_unit : sig
-  val get : unit -> Unit_info.t option
-  val get_cu : unit -> Compilation_unit.t option
-  val set : Unit_info.t -> unit
-  val unset : unit -> unit
-
-  module Name : sig
-    val get : unit -> string
-    val is : string -> bool
-    val is_ident : Ident.t -> bool
-    val is_path : Path.t -> bool
-  end
-end = struct
-  let current_unit : Unit_info.t option ref =
-    ref None
-  let get () =
-    !current_unit
-  let get_cu () =
-    Option.map Unit_info.modname (get ())
-  let set cu =
-    current_unit := Some cu
-  let unset () =
-    current_unit := None
-
-  module Name = struct
-    let get () =
-      match !current_unit with
-      | None -> ""
-      | Some cu ->
-        Compilation_unit.Name.to_string
-          (Compilation_unit.name (Unit_info.modname cu))
-    let is name =
-      get () = name
-    let is_ident id =
-      Ident.is_global id && is (Ident.name id)
-    let is_path = function
-    | Pident id -> is_ident id
-    | Pdot _ | Papply _ | Pextra_ty _ -> false
-  end
-end
 
 let set_current_unit = Current_unit.set
 let get_current_unit = Current_unit.get
@@ -3145,15 +3104,15 @@ let enter_quotation env =
 
 let enter_splice ~loc env =
   if env.stage = 0 then
-    raise (Error (Toplevel_splice loc));
+    raise (Error (Initial_stage_splice loc));
   add_stage_lock Splice_lock {env with stage = env.stage - 1}
 
 let enter_future env =
   (* Reuse a very large number *)
   { env with stage = Ident.highest_scope }
 
-let mark_toplevel_in_quotations ~scope env =
-  { env with toplevel_scope = scope }
+let mark_persistent_in_quotations ~scope env =
+  { env with persistent_scope = scope }
 
 let check_no_open_quotations loc env context =
   if env.stage = 0
@@ -3511,11 +3470,11 @@ let may_lookup_error report_errors loc env err =
   if report_errors then lookup_error loc env err
   else raise Not_found
 
-let path_is_toplevel_in_quotations env path =
-  Path.scope path <= env.toplevel_scope
+let path_is_persistent_in_quotations env path =
+  Path.scope path <= env.persistent_scope
 
 let does_not_cross_quotation env path locks =
-  if path_is_toplevel_in_quotations env path
+  if path_is_persistent_in_quotations env path
   then Ok ()
   else
     (match stage_locks_offset locks with
@@ -3544,8 +3503,7 @@ let locks_for_pers_mod ~loc_use ~loc_def env path =
   let stage_locks, locks =
     partition_locks (IdTbl.get_all_locks env.modules)
   in
-  (* Tripwire: persistent paths are toplevel-scoped, so this should never
-     fire. *)
+  (* This should never fire -- [path] points to a persistent module. *)
   assert_does_not_cross_quotation env ~loc_use ~loc_def path stage_locks;
   locks
 
@@ -4303,7 +4261,7 @@ let add_components slot root env0 comps (locks : locks) =
     implicit_jkinds = env0.implicit_jkinds;
     flags = env0.flags;
     stage = env0.stage;
-    toplevel_scope = env0.toplevel_scope;
+    persistent_scope = env0.persistent_scope;
   }
 
 let open_signature_by_path path env0 =
@@ -5508,7 +5466,7 @@ let report_error_doc = function
         "@[<hov>Not enough instance arguments: \
            the parameter@ %a@ is required.@]"
         Global_module.Parameter_name.print unset_param
-  | Toplevel_splice loc ->
+  | Initial_stage_splice loc ->
       Location.errorf ~loc
         "@[<hov>Splices ($) are not allowed in the initial stage,@ \
          as encountered at %a.@,\
@@ -5529,9 +5487,3 @@ let () =
       | _ ->
           None
     )
-
-let () =
-  let get_current_compilation_unit () =
-    Option.map Unit_info.modname (get_current_unit ())
-  in
-  Compilation_unit.Private.fwd_get_current := get_current_compilation_unit
