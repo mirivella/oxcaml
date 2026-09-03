@@ -460,7 +460,9 @@ let run_rules_incremental ?stats rules ~previous ~diff ~current incremental_db =
 
     Returns an incremental database containing the new state of [current] along
     with all the new facts added during saturation. *)
-let saturate_rules_incremental ?stats rules ~previous ~diff ~current =
+type prune = difference:Table.Map.t -> current:Table.Map.t -> Table.Map.t
+
+let saturate_rules_incremental ?stats ?prune rules ~previous ~diff ~current =
   let rec saturate_rules_incremental ?stats ~previous ~diff ~current rules
       full_diff =
     (* After one call to [run_rules_incremental], all deductions from facts in
@@ -469,6 +471,18 @@ let saturate_rules_incremental ?stats rules ~previous ~diff ~current =
     let incremental_db =
       run_rules_incremental ?stats ~previous ~diff ~current rules
         (incremental ~current ~difference:Table.Map.empty)
+    in
+    (* Let the caller remove facts that have become redundant given the facts
+       derived in this iteration (see [Schedule.run]). The removal is applied to
+       both [current] and [difference] so that the two stay consistent. *)
+    let incremental_db =
+      match prune with
+      | None -> incremental_db
+      | Some prune ->
+        let difference = incremental_db.difference in
+        incremental
+          ~current:(prune ~difference ~current:incremental_db.current)
+          ~difference:(prune ~difference ~current:difference)
     in
     if Table.Map.is_empty incremental_db.difference
     then incremental ~current ~difference:full_diff
@@ -524,13 +538,13 @@ let run_list_incremental fns ~previous ~diff ~current =
     (current, [0, diff], 0, Table.Map.empty)
     (List.map (fun fn -> fn, previous, -1) fns)
 
-let rec run_incremental ?stats schedule ~previous ~diff ~current =
+let rec run_incremental ?stats ?prune schedule ~previous ~diff ~current =
   match schedule with
   | Saturate rules ->
-    saturate_rules_incremental ?stats rules ~previous ~diff ~current
+    saturate_rules_incremental ?stats ?prune rules ~previous ~diff ~current
   | Fixpoint schedules ->
     run_list_incremental
-      (List.map (run_incremental ?stats) schedules)
+      (List.map (run_incremental ?stats ?prune) schedules)
       ~previous ~diff ~current
 
 let maybe_with_provenance stats schedule f =
@@ -543,8 +557,8 @@ let maybe_with_provenance stats schedule f =
         enable_provenance_for_debug schedule true;
         f schedule)
 
-let run ?stats schedule db =
+let run ?stats ?prune schedule db =
   maybe_with_provenance stats schedule (fun schedule ->
-      (run_incremental ?stats schedule ~previous:Table.Map.empty ~diff:db
-         ~current:db)
+      (run_incremental ?stats ?prune schedule ~previous:Table.Map.empty
+         ~diff:db ~current:db)
         .current)
