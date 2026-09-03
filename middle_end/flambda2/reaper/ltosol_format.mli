@@ -30,10 +30,12 @@ exception Error of error
 
 (** Write an .ltosol file with the given solution to disk, sharded into one file
     section per compilation unit. [participants] should list the compilation
-    units included in the solution. *)
+    units included in the solution, each paired with the compilation units its
+    dependency graph references; these determine which sections the unit's
+    rebuild will need to read. *)
 val save :
   filename:string ->
-  participants:Compilation_unit.t list ->
+  participants:(Compilation_unit.t * Compilation_unit.Set.t) list ->
   solution:Unboxing_analysis.result ->
   unit
 

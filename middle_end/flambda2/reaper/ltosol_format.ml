@@ -17,6 +17,40 @@
 
 open Datalog_helpers
 
+(* The compilation units of all identifiers in [ids]. Constants and
+   continuations are not scoped to compilation units. *)
+let compilation_units_of_ids
+    ({ symbols; variables; simples; consts = _; code_ids; continuations = _ } :
+      Ids_for_export.t) =
+  let acc = Compilation_unit.Set.empty in
+  let acc =
+    Symbol.Set.fold
+      (fun symbol acc ->
+        Compilation_unit.Set.add (Symbol.compilation_unit symbol) acc)
+      symbols acc
+  in
+  let acc =
+    Variable.Set.fold
+      (fun var acc ->
+        Compilation_unit.Set.add (Variable.compilation_unit var) acc)
+      variables acc
+  in
+  let acc =
+    Code_id.Set.fold
+      (fun code_id acc ->
+        Compilation_unit.Set.add (Code_id.get_compilation_unit code_id) acc)
+      code_ids acc
+  in
+  Ids_for_export.Simple.Set.fold
+    (fun simple acc ->
+      Ids_for_export.Simple.pattern_match simple
+        ~name:(fun name ~coercion:_ ->
+          Compilation_unit.Set.add
+            (Code_id_or_name.compilation_unit (Code_id_or_name.name name))
+            acc)
+        ~const:(fun _ -> acc))
+    simples acc
+
 (* Split a map by the compilation unit of its (outermost) key. *)
 let partition_by_cu map =
   Code_id_or_name.Map.fold
@@ -461,15 +495,16 @@ end
 module Shard : sig
   type t
 
-  (** Also returns the fields the shard references, for the file-wide view list.
-  *)
+  (** Also returns the fields the shard references (for the file-wide view list)
+      and the compilation units of all identifiers it references (for computing
+      which sections a rebuild needs). *)
   val create :
     solution_tables:Solution_tables.t ->
     unboxed_fields:Unboxing_analysis.unboxed Code_id_or_name.Map.t ->
     changed_representation:
       (Unboxing_analysis.changed_representation * Code_id_or_name.t)
       Code_id_or_name.Map.t ->
-    t * Field.Set.t
+    t * Field.Set.t * Compilation_unit.Set.t
 
   val deserialise :
     t ->
@@ -510,7 +545,8 @@ end = struct
         unboxed_fields;
         changed_representation
       },
-      fields )
+      fields,
+      compilation_units_of_ids ids )
 
   let deserialise
       { table_data; solution_tables; unboxed_fields; changed_representation }
@@ -541,7 +577,11 @@ end
 module Header = struct
   type t =
     { id_stamp_counters : Id_stamp_counters.t;
-      participants : Compilation_unit.t list;
+      (* Each participant is paired with the units whose sections its rebuild
+         needs: the transitive closure of the references relation, starting from
+         the units the participant's dependency graph references (see
+         [save]). *)
+      participants : (Compilation_unit.t * Compilation_unit.t list) list;
       (* Fields are hashconsed per-process, so the solution is stored with views
          of them in the style of [table_data]. One list serves all sections. *)
       field_views : (Field.t * Field.view) list;
@@ -560,7 +600,7 @@ type t =
 
 let id_stamp_counters t = t.header.Header.id_stamp_counters
 
-let participants t = t.header.Header.participants
+let participants t = List.map fst t.header.Header.participants
 
 type error =
   | Wrong_format of string
@@ -620,19 +660,60 @@ let save ~filename ~participants ~solution =
   let builder =
     File_sections.Builder.create (Compilation_unit.Map.cardinal shard_inputs)
   in
-  let rev_index, fields =
+  let rev_index, fields, referenced_by_section =
     Compilation_unit.Map.fold
       (fun cu (solution_tables, unboxed_fields, changed_representation)
-           (rev_index, fields) ->
-        let shard, shard_fields =
+           (rev_index, fields, referenced_by_section) ->
+        let shard, shard_fields, referenced =
           Shard.create ~solution_tables ~unboxed_fields ~changed_representation
         in
         let idx = File_sections.Builder.add builder (Obj.repr shard) in
-        (cu, idx) :: rev_index, Field.Set.union fields shard_fields)
-      shard_inputs ([], Field.Set.empty)
+        ( (cu, idx) :: rev_index,
+          Field.Set.union fields shard_fields,
+          Compilation_unit.Map.add cu referenced referenced_by_section ))
+      shard_inputs
+      ([], Field.Set.empty, Compilation_unit.Map.empty)
   in
   let serialized_sections, section_toc, sections_length =
     File_sections.serialize (File_sections.Builder.build builder)
+  in
+  (* The sections a participant's rebuild needs are the transitive closure of
+     the references relation, starting from the units the participant's own
+     dependency graph references (plus itself).
+
+     Two different reference sets are involved. The starting points must come
+     from the participant's graph, because the rebuild queries the solution
+     directly about identifiers occurring in the unit's own code. The closure
+     then follows [referenced_by_section] — the units referenced by each
+     section's serialised contents — because loading a section puts
+     solver-derived identifiers (e.g. from [usages] rows) in the rebuild's
+     hands, and those can belong to units the participant's graph never
+     mentions.
+
+     Absence of facts is meaningful to rebuild queries, so the closure must
+     cover every unit whose identifiers the rebuild can encounter; a section
+     outside it is then equivalent to one with no facts. *)
+  let transitively_referenced units =
+    let rec visit cu visited =
+      if Compilation_unit.Set.mem cu visited
+      then visited
+      else
+        let visited = Compilation_unit.Set.add cu visited in
+        match Compilation_unit.Map.find_opt cu referenced_by_section with
+        | None -> visited
+        | Some referenced -> Compilation_unit.Set.fold visit referenced visited
+    in
+    Compilation_unit.Set.fold visit units Compilation_unit.Set.empty
+  in
+  let participants =
+    List.map
+      (fun (cu, referenced_by_graph) ->
+        let needed =
+          transitively_referenced
+            (Compilation_unit.Set.add cu referenced_by_graph)
+        in
+        cu, Compilation_unit.Set.elements needed)
+      participants
   in
   (* We need to store ID stamp counters so that stamp-based ids created during
      rebuild don't conflict with the ones created during solve. *)
@@ -682,26 +763,66 @@ let load filename =
     close_in_noerr ic;
     raise exn
 
-let solution_for_members { header; sections } ~members:_ =
-  (* CR sspies: use [members] to load only the sections the batch needs, instead
-     of the whole solution. *)
-  let rename_field = Field.import_views header.Header.field_views in
-  let tables, unboxed_fields, changed_representation =
+let print_loaded_sections ~members ~total ~loaded =
+  let pp_units ppf cus =
+    Format.pp_print_list
+      ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ")
+      (fun ppf cu ->
+        Format.pp_print_string ppf (Compilation_unit.full_path_as_string cu))
+      ppf cus
+  in
+  Format.eprintf
+    "@[<hov 2>ltosol sections for [@[<hov>%a@]]:@ loaded %d of %d:@ \
+     [@[<hov>%a@]]@]@."
+    pp_units members (List.length loaded) total pp_units loaded
+
+let solution_for_members { header; sections } ~members =
+  let needed =
     List.fold_left
-      (fun (tables, unboxed_fields, changed_representation) (_cu, idx) ->
-        let shard : Shard.t = Obj.obj (File_sections.get sections idx) in
-        let shard_tables, shard_unboxed, shard_changed =
-          Shard.deserialise shard ~rename_field
-        in
-        ( Solution_tables.disjoint_union tables shard_tables,
-          Code_id_or_name.Map.disjoint_union unboxed_fields shard_unboxed,
-          Code_id_or_name.Map.disjoint_union changed_representation
-            shard_changed ))
+      (fun needed member ->
+        match
+          List.find_opt
+            (fun (cu, _) -> Compilation_unit.equal cu member)
+            header.Header.participants
+        with
+        | Some (_, needed_by_member) ->
+          List.fold_left
+            (fun needed cu -> Compilation_unit.Set.add cu needed)
+            needed needed_by_member
+        | None ->
+          Misc.fatal_errorf "Unit %a is not a participant in the LTO solution"
+            (Format_doc.compat Compilation_unit.print)
+            member)
+      Compilation_unit.Set.empty members
+  in
+  let rename_field = Field.import_views header.Header.field_views in
+  let tables, unboxed_fields, changed_representation, rev_loaded =
+    List.fold_left
+      (fun (tables, unboxed_fields, changed_representation, rev_loaded)
+           (cu, idx) ->
+        if not (Compilation_unit.Set.mem cu needed)
+        then tables, unboxed_fields, changed_representation, rev_loaded
+        else
+          let shard : Shard.t = Obj.obj (File_sections.get sections idx) in
+          let shard_tables, shard_unboxed, shard_changed =
+            Shard.deserialise shard ~rename_field
+          in
+          ( Solution_tables.disjoint_union tables shard_tables,
+            Code_id_or_name.Map.disjoint_union unboxed_fields shard_unboxed,
+            Code_id_or_name.Map.disjoint_union changed_representation
+              shard_changed,
+            cu :: rev_loaded ))
       ( Solution_tables.empty,
         Code_id_or_name.Map.empty,
-        Code_id_or_name.Map.empty )
+        Code_id_or_name.Map.empty,
+        [] )
       header.Header.index
   in
+  if Flambda_features.debug_reaper "sections"
+  then
+    print_loaded_sections ~members
+      ~total:(List.length header.Header.index)
+      ~loaded:(List.rev rev_loaded);
   { Unboxing_analysis.db = Solution_tables.to_database tables;
     unboxed_fields;
     changed_representation

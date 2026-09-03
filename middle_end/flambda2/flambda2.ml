@@ -474,18 +474,24 @@ let reaper_lto_solve ~cmr_files ~ltosol_file =
      combined graph, so they are local; set this before the solve. *)
   Flambda2_reaper.Field.set_locality_scope
     (Compilation_unit.Set.of_list participants);
-  let combined_graph =
+  let graphs =
     (* The lists are in command-line order, which is deterministic, as required
        for reproducible .ltosol output. *)
-    Flambda2_reaper.Lto_combine.combine
-      (List.map2
-         (fun participant cmr ->
-           ( participant,
-             Flambda2_reaper.Cmr_format.Serialisable.deserialise_deps cmr ))
-         participants cmrs)
+    List.map2
+      (fun participant cmr ->
+        ( participant,
+          Flambda2_reaper.Cmr_format.Serialisable.deserialise_deps cmr ))
+      participants cmrs
   in
-  (* CR mvellacott: split the resulting solution into per-compilation-unit
-     portions. *)
+  (* The compilation units referenced by each unit's own graph determine which
+     pieces of the solution are loaded when rebuilding. *)
+  let participants =
+    List.map
+      (fun (participant, graph) ->
+        participant, Flambda2_reaper.Global_flow_graph.compilation_units graph)
+      graphs
+  in
+  let combined_graph = Flambda2_reaper.Lto_combine.combine graphs in
   let solution =
     Flambda2_reaper.Reaper.Staged.solve_whole_program combined_graph
   in
