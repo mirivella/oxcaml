@@ -447,18 +447,8 @@ module Datalog : sig
     type t
 
     (** [saturate rules] is a schedule that repeatedly applies the rules in
-        [rules] until reaching a fixpoint.
-
-        {b Note}: [saturate rules] is equivalent to [fixpoint (rules rules)],
-        but is (slightly) more efficient. It is not necessary to wrap a
-        [saturate] schedule in a [fixpoint]. *)
+        [rules] until reaching a fixpoint. *)
     val saturate : rule list -> t
-
-    (** [fixpoint schedules] repeatedly runs the schedules in [schedules] until
-        reaching a fixpoint.
-
-        Facts added by previous schedules in the list are visible. *)
-    val fixpoint : t list -> t
 
     type stats
 
@@ -466,11 +456,15 @@ module Datalog : sig
 
     val print_stats : Format.formatter -> stats -> unit
 
+    (** A pruning step for [run]. See [schedule.mli] for more information. *)
+    type prune = difference:database -> current:database -> database
+
     (** [run schedule db] runs the schedule [schedule] on the database [db].
 
         It returns a new database that contains all the facts in [db], plus all
-        the facts that were inferred by [schedule]. *)
-    val run : ?stats:stats -> t -> database -> database
+        the facts that were inferred by [schedule], minus any facts removed by
+        [prune]. *)
+    val run : ?stats:stats -> ?prune:prune -> t -> database -> database
   end
 
   type bindings
