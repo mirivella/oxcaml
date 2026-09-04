@@ -365,13 +365,13 @@ module Datalog_schedule = struct
 
   let ( let$$ ) x f = with_priority 1 x f
 
-  (* All rules run in a single saturation, priority-0 rules first. In
-     particular the rules deriving [any_source]/[any_usage] run in every
-     iteration, in lockstep with the rules copying [sources]/[usages] sets
-     along aliases. Saturating the set-copying rules on their own first (as a
-     [Fixpoint] of two [Saturate]s would) builds and copies large sets for nodes
-     that are found to be top a few iterations later; those facts are never
-     needed and their volume grows much faster than the program. *)
+  (* All rules run in a single saturation, priority-0 rules first. In particular
+     the rules deriving [any_source]/[any_usage] run in every iteration, in
+     lockstep with the rules copying [sources]/[usages] sets along aliases.
+     Saturating the set-copying rules on their own first (as a [Fixpoint] of two
+     [Saturate]s would) builds and copies large sets for nodes that are found to
+     be top a few iterations later; those facts are never needed and their
+     volume grows much faster than the program. *)
   let make_schedule l = Schedule.saturate (List.map snd l)
 
   let reverse_rules =
@@ -979,7 +979,7 @@ let has_source_query db x = has_source_query [x] db
 
    - unboxing ([-reaper-unbox]): [add_usages_through_function_slots], used by
    the unboxing decisions, reads [usages] of function-slot projections without
-   checking [any_usage].  *)
+   checking [any_usage]. *)
 let prune_sets_of_top_nodes ~difference ~current =
   let prune any_tbl set_tbl current =
     let new_tops = Datalog.get_table any_tbl difference in
@@ -1000,7 +1000,9 @@ let prune_sets_of_top_nodes ~difference ~current =
 
 let perform_analysis db ~stats =
   let prune =
-    if Flambda_features.reaper_local_fields () || Flambda_features.reaper_unbox ()
+    if
+      Flambda_features.reaper_local_fields ()
+      || Flambda_features.reaper_unbox ()
     then None
     else Some prune_sets_of_top_nodes
   in

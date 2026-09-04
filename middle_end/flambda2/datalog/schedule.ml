@@ -432,20 +432,12 @@ let run_rule_incremental ?stats ~previous ~diff ~current incremental_db
   in
   incremental_db
 
-type t =
-  | Saturate of rule list
-  | Fixpoint of t list
+type t = Saturate of rule list
 
-let rec enable_provenance_for_debug schedule b =
-  match schedule with
-  | Fixpoint schedules ->
-    List.iter (fun schedule -> enable_provenance_for_debug schedule b) schedules
-  | Saturate rules ->
-    List.iter
-      (fun (Rule { enable_provenance; _ }) -> enable_provenance := b)
-      rules
-
-let fixpoint schedule = Fixpoint schedule
+let enable_provenance_for_debug (Saturate rules) b =
+  List.iter
+    (fun (Rule { enable_provenance; _ }) -> enable_provenance := b)
+    rules
 
 let saturate rules = Saturate rules
 
@@ -455,13 +447,13 @@ let run_rules_incremental ?stats rules ~previous ~diff ~current incremental_db =
       run_rule_incremental ?stats ~previous ~diff ~current incremental_db rule)
     incremental_db rules
 
+type prune = difference:Table.Map.t -> current:Table.Map.t -> Table.Map.t
+
 (** Repeatedly apply the rules in [rules] to the database [current] until
     reaching a fixpoint.
 
     Returns an incremental database containing the new state of [current] along
     with all the new facts added during saturation. *)
-type prune = difference:Table.Map.t -> current:Table.Map.t -> Table.Map.t
-
 let saturate_rules_incremental ?stats ?prune rules ~previous ~diff ~current =
   let rec saturate_rules_incremental ?stats ~previous ~diff ~current rules
       full_diff =
@@ -494,58 +486,8 @@ let saturate_rules_incremental ?stats ?prune rules ~previous ~diff ~current =
   saturate_rules_incremental ?stats rules Table.Map.empty ~previous ~diff
     ~current
 
-(** Run the evaluation functions in [fns] until reaching a fixpoint. *)
-let run_list_incremental fns ~previous ~diff ~current =
-  (* Each evaluation of a rule that produced changes is associated with a
-     timestamp (the initial used-provided [diff] is at timestamp [0]), and each
-     evaluation function is associated with the state of the database last time
-     it was run (initially [previous]) and the corresponding timestamp
-     (initially [-1]).
-
-     Before evaluating a function [fn], we compute the diff since its previous
-     run by concatenating all the diffs with a higher timestamp. *)
-  let rec cut ~cut_after result = function
-    | [] -> result
-    | (ts, diff) :: diffs ->
-      if ts > cut_after
-      then cut ~cut_after (Table.Map.concat ~earlier:diff ~later:result) diffs
-      else result
-  in
-  let rec loop (current, diffs, ts, full_diff) fns =
-    let (current, diffs, ts', full_diff), fns =
-      List.fold_left_map
-        (fun (db, diffs, ts, full_diff) (fn, previous, cut_after) ->
-          let diff = cut ~cut_after Table.Map.empty diffs in
-          let incremental_db = fn ~previous ~diff ~current:db in
-          if Table.Map.is_empty incremental_db.difference
-          then (db, diffs, ts, full_diff), (fn, db, ts)
-          else
-            let ts = ts + 1 in
-            ( ( incremental_db.current,
-                (ts, incremental_db.difference) :: diffs,
-                ts,
-                Table.Map.concat ~earlier:full_diff
-                  ~later:incremental_db.difference ),
-              (fn, incremental_db.current, ts) ))
-        (current, diffs, ts, full_diff)
-        fns
-    in
-    if ts' = ts
-    then incremental ~current ~difference:full_diff
-    else loop (current, diffs, ts', full_diff) fns
-  in
-  loop
-    (current, [0, diff], 0, Table.Map.empty)
-    (List.map (fun fn -> fn, previous, -1) fns)
-
-let rec run_incremental ?stats ?prune schedule ~previous ~diff ~current =
-  match schedule with
-  | Saturate rules ->
-    saturate_rules_incremental ?stats ?prune rules ~previous ~diff ~current
-  | Fixpoint schedules ->
-    run_list_incremental
-      (List.map (run_incremental ?stats ?prune) schedules)
-      ~previous ~diff ~current
+let run_incremental ?stats ?prune (Saturate rules) ~previous ~diff ~current =
+  saturate_rules_incremental ?stats ?prune rules ~previous ~diff ~current
 
 let maybe_with_provenance stats schedule f =
   match stats with
@@ -559,6 +501,6 @@ let maybe_with_provenance stats schedule f =
 
 let run ?stats ?prune schedule db =
   maybe_with_provenance stats schedule (fun schedule ->
-      (run_incremental ?stats ?prune schedule ~previous:Table.Map.empty
-         ~diff:db ~current:db)
+      (run_incremental ?stats ?prune schedule ~previous:Table.Map.empty ~diff:db
+         ~current:db)
         .current)
