@@ -367,11 +367,7 @@ module Datalog_schedule = struct
 
   (* All rules run in a single saturation, priority-0 rules first. In particular
      the rules deriving [any_source]/[any_usage] run in every iteration, in
-     lockstep with the rules copying [sources]/[usages] sets along aliases.
-     Saturating the set-copying rules on their own first (as a [Fixpoint] of two
-     [Saturate]s would) builds and copies large sets for nodes that are found to
-     be top a few iterations later; those facts are never needed and their
-     volume grows much faster than the program. *)
+     lockstep with the rules copying [sources]/[usages] sets along aliases. *)
   let make_schedule l = Schedule.saturate (List.map snd l)
 
   let reverse_rules =
