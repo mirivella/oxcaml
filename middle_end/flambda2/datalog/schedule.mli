@@ -33,4 +33,24 @@ val saturate : rule list -> t
 
 val fixpoint : t list -> t
 
-val run : ?stats:stats -> t -> Table.Map.t -> Table.Map.t
+(** A pruning step for {!run}. After every iteration of a saturation,
+    [prune ~difference ~current] is called with the facts derived during that
+    iteration ([difference]) and the database at the end of it ([current]), and
+    must return [current] with potentially some facts removed.
+
+    Datalog evaluation assumes that the database only grows, so removing a fact
+    is only sound if the fact is {e redundant}: every conclusion any rule could
+    draw from it must also be derivable without it, and no query may depend on
+    its presence. The typical use is a fact subsumed by a "top" fact, e.g.
+    removing [sources x _] once [any_source x] has been derived, when all rules
+    reading [sources x _] are guarded by [not (any_source x)].
+
+    Two further caveats: a pruned fact does not reappear in any later [diff], so
+    rules never fire on it after its removal (fine for redundant facts, since
+    those rules must not derive anything new from it); and within a [fixpoint]
+    of several [saturate] schedules, facts pruned after the iteration that
+    derived them remain in the difference seen by the {e other} schedules, so
+    those schedules must tolerate them as well. *)
+type prune = difference:Table.Map.t -> current:Table.Map.t -> Table.Map.t
+
+val run : ?stats:stats -> ?prune:prune -> t -> Table.Map.t -> Table.Map.t

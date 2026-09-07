@@ -365,11 +365,14 @@ module Datalog_schedule = struct
 
   let ( let$$ ) x f = with_priority 1 x f
 
-  let make_schedule l =
-    Schedule.fixpoint
-      (List.init 2 (fun i ->
-           Schedule.saturate
-             (List.filter_map (fun (p, r) -> if i = p then Some r else None) l)))
+  (* All rules run in a single saturation, priority-0 rules first. In
+     particular the rules deriving [any_source]/[any_usage] run in every
+     iteration, in lockstep with the rules copying [sources]/[usages] sets
+     along aliases. Saturating the set-copying rules on their own first (as a
+     [Fixpoint] of two [Saturate]s would) builds and copies large sets for nodes
+     that are found to be top a few iterations later; those facts are never
+     needed and their volume grows much faster than the program. *)
+  let make_schedule l = Schedule.saturate (List.map snd l)
 
   let reverse_rules =
     (* Reverse relations, because datalog does not implement a more efficient
@@ -957,10 +960,53 @@ let post_processing_rules =
 
 let has_source_query db x = has_source_query [x] db
 
+(* [sources x _] and [usages x _] are only meaningful while [x] is not top:
+   [any_source x] (resp. [any_usage x]) subsumes them, the rules deriving and
+   consuming them are guarded by [nontop_sources]/[nontop_usages], and the
+   queries below check the top facts first. Since [any_source]/[any_usage] are
+   derived in the same stratum, a node's set may have been built (and copied
+   along aliases) before the node was found to be top; those facts are redundant
+   and are dropped here as soon as the top fact appears. Without this the tables
+   accumulate the sets of escaping variables, typically the parameters of widely
+   called functions, which collect the sources of all their callers and
+   otherwise dominate the size of the solution as the program grows.
+
+   See [Schedule.prune] for the soundness condition. It holds here except for
+   two configurations, in which pruning is disabled:
+
+   - local fields ([-reaper-local-fields]): the local-field rules read
+   [sources]/[usages] of top nodes on purpose;
+
+   - unboxing ([-reaper-unbox]): [add_usages_through_function_slots], used by
+   the unboxing decisions, reads [usages] of function-slot projections without
+   checking [any_usage].  *)
+let prune_sets_of_top_nodes ~difference ~current =
+  let prune any_tbl set_tbl current =
+    let new_tops = Datalog.get_table any_tbl difference in
+    if Code_id_or_name.Map.is_empty new_tops
+    then current
+    else
+      let sets = Datalog.get_table set_tbl current in
+      let sets' =
+        Code_id_or_name.Map.fold
+          (fun x () sets -> Code_id_or_name.Map.remove x sets)
+          new_tops sets
+      in
+      if sets' == sets then current else Datalog.set_table set_tbl sets' current
+  in
+  current
+  |> prune Global_flow_graph.any_source sources_table
+  |> prune Global_flow_graph.any_usage usages_table
+
 let perform_analysis db ~stats =
+  let prune =
+    if Flambda_features.reaper_local_fields () || Flambda_features.reaper_unbox ()
+    then None
+    else Some prune_sets_of_top_nodes
+  in
   let db =
     Profile.record_call ~accumulate:true "analysis" (fun () ->
-        Datalog.Schedule.run ~stats datalog_schedule db)
+        Datalog.Schedule.run ~stats ?prune datalog_schedule db)
   in
   let db =
     Profile.record_call ~accumulate:true "compute_field_usages" (fun () ->

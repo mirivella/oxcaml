@@ -474,18 +474,24 @@ let reaper_lto_solve ~cmr_files ~ltosol_file =
      combined graph, so they are local; set this before the solve. *)
   Flambda2_reaper.Field.set_locality_scope
     (Compilation_unit.Set.of_list participants);
-  let combined_graph =
+  let graphs =
     (* The lists are in command-line order, which is deterministic, as required
        for reproducible .ltosol output. *)
-    Flambda2_reaper.Lto_combine.combine
-      (List.map2
-         (fun participant cmr ->
-           ( participant,
-             Flambda2_reaper.Cmr_format.Serialisable.deserialise_deps cmr ))
-         participants cmrs)
+    List.map2
+      (fun participant cmr ->
+        ( participant,
+          Flambda2_reaper.Cmr_format.Serialisable.deserialise_deps cmr ))
+      participants cmrs
   in
-  (* CR mvellacott: split the resulting solution into per-compilation-unit
-     portions. *)
+  (* The compilation units referenced by each unit's own graph determine which
+     pieces of the solution are loaded when rebuilding. *)
+  let participants =
+    List.map
+      (fun (participant, graph) ->
+        participant, Flambda2_reaper.Global_flow_graph.compilation_units graph)
+      graphs
+  in
+  let combined_graph = Flambda2_reaper.Lto_combine.combine graphs in
   let solution =
     Flambda2_reaper.Reaper.Staged.solve_whole_program combined_graph
   in
@@ -495,14 +501,15 @@ let reaper_lto_solve ~cmr_files ~ltosol_file =
 let reaped_flambda2_to_cmm ~machine_width ~ltosol_filename ~batch_members =
   (* Everything up to the function returned below is computed once and shared by
      the whole batch of rebuilds. *)
-  let { Flambda2_reaper.Ltosol_format.File_contents.id_stamp_counters;
-        participants;
-        solution = ltosol_solution
-      } =
+  let ltosol =
     Profile.record_call ~accumulate:true "ltosol_load" (fun () ->
         Flambda2_reaper.Ltosol_format.load ltosol_filename)
   in
+  let id_stamp_counters =
+    Flambda2_reaper.Ltosol_format.id_stamp_counters ltosol
+  in
   Flambda2_reaper.Id_stamp_counters.restore_for_resume id_stamp_counters;
+  let participants = Flambda2_reaper.Ltosol_format.participants ltosol in
   Compilenv.set_lto_participants participants;
   (* Query the solved tables under the same locality the solve used. *)
   Flambda2_reaper.Field.set_locality_scope
@@ -516,8 +523,8 @@ let reaped_flambda2_to_cmm ~machine_width ~ltosol_filename ~batch_members =
   let solved_dep =
     lazy
       (Profile.record_call ~accumulate:true "ltosol_deserialise" (fun () ->
-           Flambda2_reaper.Ltosol_format.Serialisable_solution.deserialise
-             ltosol_solution))
+           Flambda2_reaper.Ltosol_format.solution_for_members ltosol
+             ~members:batch_members))
   in
   let cmx_loader = Flambda_cmx.create_loader ~get_module_info in
   (* Members of the batch whose rebuild has not started yet. Their .reaped.cmx
